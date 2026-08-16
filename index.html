@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benders Availability — C2 Division</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🏒</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-main">
+    <h1>Benders Availability</h1>
+    <p class="subtitle" id="season-line">C2 Division</p>
+  </div>
+  <div class="topbar-actions">
+    <button type="button" id="btn-share" class="btn">Copy share link</button>
+    <button type="button" id="btn-export" class="btn">Export</button>
+    <button type="button" id="btn-import" class="btn">Import</button>
+    <button type="button" id="btn-reset" class="btn btn-quiet">Reset</button>
+    <input type="file" id="file-import" accept="application/json" hidden>
+  </div>
+</header>
+
+<section class="controls">
+  <label class="field">
+    <span class="field-label">Filter players</span>
+    <input type="search" id="filter-players" placeholder="Type a name…" autocomplete="off">
+  </label>
+
+  <label class="field">
+    <span class="field-label">I am</span>
+    <select id="me-select">
+      <option value="">— nobody in particular —</option>
+    </select>
+  </label>
+
+  <label class="field">
+    <span class="field-label">Games</span>
+    <select id="game-scope">
+      <option value="upcoming">Benders — upcoming</option>
+      <option value="benders">Benders — full season</option>
+      <option value="all">Every C2 game</option>
+    </select>
+  </label>
+
+  <div class="field field-inline">
+    <label class="check"><input type="checkbox" id="toggle-mine"> Only my column</label>
+    <label class="check"><input type="checkbox" id="toggle-compact"> Compact</label>
+  </div>
+
+  <p class="hint">Click a cell to cycle <b class="k k-in">In</b> → <b class="k k-out">Out</b> → <b class="k k-maybe">Maybe</b> → blank. Everything saves in this browser.</p>
+</section>
+
+<main>
+  <div class="grid-wrap" id="grid-wrap">
+    <table class="grid" id="grid"></table>
+  </div>
+  <p class="empty" id="empty-msg" hidden></p>
+</main>
+
+<footer class="footer">
+  <span id="footer-stats"></span>
+  <span class="footer-note">Saved locally in this browser · <a href="https://github.com/bengrier/benders-scheduler">source</a></span>
+</footer>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="data/data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

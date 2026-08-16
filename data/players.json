@@ -1,0 +1,86 @@
+[
+  {
+    "name": "James Bennett",
+    "first": "James",
+    "last": "Bennett",
+    "role": "skater"
+  },
+  {
+    "name": "Todd Brownell",
+    "first": "Todd",
+    "last": "Brownell",
+    "role": "captain"
+  },
+  {
+    "name": "Jason Cumbers",
+    "first": "Jason",
+    "last": "Cumbers",
+    "role": "skater"
+  },
+  {
+    "name": "Samuel Eddy",
+    "first": "Samuel",
+    "last": "Eddy",
+    "role": "skater"
+  },
+  {
+    "name": "Graham Geary",
+    "first": "Graham",
+    "last": "Geary",
+    "role": "skater"
+  },
+  {
+    "name": "Dan Gerdes",
+    "first": "Dan",
+    "last": "Gerdes",
+    "role": "skater"
+  },
+  {
+    "name": "Brenton Goodman",
+    "first": "Brenton",
+    "last": "Goodman",
+    "role": "skater"
+  },
+  {
+    "name": "Kyle Gordon",
+    "first": "Kyle",
+    "last": "Gordon",
+    "role": "skater"
+  },
+  {
+    "name": "Ben Grier",
+    "first": "Ben",
+    "last": "Grier",
+    "role": "skater"
+  },
+  {
+    "name": "Josh Gundy",
+    "first": "Josh",
+    "last": "Gundy",
+    "role": "skater"
+  },
+  {
+    "name": "Mark Koenig",
+    "first": "Mark",
+    "last": "Koenig",
+    "role": "goalie"
+  },
+  {
+    "name": "Justin McLaughlin",
+    "first": "Justin",
+    "last": "McLaughlin",
+    "role": "skater"
+  },
+  {
+    "name": "Jeremiah Stilson",
+    "first": "Jeremiah",
+    "last": "Stilson",
+    "role": "skater"
+  },
+  {
+    "name": "Jake Vicini",
+    "first": "Jake",
+    "last": "Vicini",
+    "role": "skater"
+  }
+]
