@@ -164,10 +164,14 @@ def parse_schedule():
     slots = [parse_header_slot(c) for c in rows[1][1:]]
 
     games = []
+    dates = []
+
     for row in rows[2:]:
         day, weekday = parse_date_cell(row[0], season_year)
         if not day:
             continue
+
+        on_this_date = []
         for index, cell in enumerate(row[1:]):
             if index >= len(slots):
                 break
@@ -178,10 +182,28 @@ def parse_schedule():
             game["date"] = day.isoformat()
             game["weekday"] = weekday
             game["slot"] = index
-            games.append(game)
+            on_this_date.append(game)
+
+        games.extend(on_this_date)
+
+        # Every date row in the sheet gets an entry, including the ones where
+        # every cell said "no game", so the grid can show the gaps in the
+        # season rather than silently skipping them.
+        if not on_this_date:
+            kind = "off"          # nobody plays; the rink is dark for us
+        elif any(g["isOurs"] or g["playoff"] for g in on_this_date):
+            kind = "play"         # we're on the ice
+        else:
+            kind = "bye"          # the league plays, we're off
+        dates.append({
+            "date": day.isoformat(),
+            "weekday": weekday,
+            "kind": kind,
+        })
 
     games.sort(key=lambda g: (g["date"], g["slot"]))
-    return {"title": title, "team": OUR_TEAM, "games": games}
+    dates.sort(key=lambda d: d["date"])
+    return {"title": title, "team": OUR_TEAM, "games": games, "dates": dates}
 
 
 def main():
@@ -207,9 +229,13 @@ def main():
 
     ours = sum(1 for g in schedule["games"] if g["isOurs"])
     playoffs = sum(1 for g in schedule["games"] if g["playoff"])
+    kinds = {k: sum(1 for d in schedule["dates"] if d["kind"] == k)
+             for k in ("play", "bye", "off")}
     print(f"players.json  {len(players)} players")
     print(f"schedule.json {len(schedule['games'])} games "
           f"({ours} Benders, {playoffs} playoff)")
+    print(f"              {len(schedule['dates'])} dates "
+          f"({kinds['play']} playing, {kinds['bye']} bye, {kinds['off']} no games)")
 
 
 if __name__ == "__main__":

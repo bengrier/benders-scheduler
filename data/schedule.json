@@ -758,5 +758,217 @@
       "weekday": "Monday",
       "slot": 0
     }
+  ],
+  "dates": [
+    {
+      "date": "2026-08-15",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-08-22",
+      "weekday": "Saturday",
+      "kind": "bye"
+    },
+    {
+      "date": "2026-08-29",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-09-05",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-09-12",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-09-19",
+      "weekday": "Saturday",
+      "kind": "bye"
+    },
+    {
+      "date": "2026-09-26",
+      "weekday": "Saturday",
+      "kind": "bye"
+    },
+    {
+      "date": "2026-10-03",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-10-10",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2026-10-17",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-10-24",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-10-31",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2026-11-07",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2026-11-14",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2026-11-21",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-11-28",
+      "weekday": "Saturday",
+      "kind": "bye"
+    },
+    {
+      "date": "2026-12-05",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2026-12-12",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-12-19",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2026-12-26",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2027-01-02",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-01-09",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-01-16",
+      "weekday": "Saturday",
+      "kind": "bye"
+    },
+    {
+      "date": "2027-01-23",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-01-30",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-02-06",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-02-13",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-02-20",
+      "weekday": "Saturday",
+      "kind": "bye"
+    },
+    {
+      "date": "2027-02-27",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-03-06",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-03-13",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2027-03-20",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-03-27",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-04-03",
+      "weekday": "Saturday",
+      "kind": "off"
+    },
+    {
+      "date": "2027-04-10",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-04-17",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-04-19",
+      "weekday": "Monday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-04-24",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-05-01",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-05-03",
+      "weekday": "Monday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-05-08",
+      "weekday": "Saturday",
+      "kind": "play"
+    },
+    {
+      "date": "2027-05-10",
+      "weekday": "Monday",
+      "kind": "play"
+    }
   ]
 }

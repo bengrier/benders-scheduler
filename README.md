@@ -29,6 +29,18 @@ Controls along the top:
 The right-hand column counts confirmed skaters per game and flags games with no
 goalie. The bottom row totals each player's games across the season.
 
+### Weeks off
+
+Every date on the league sheet gets a row, so the grid lines up with a calendar
+instead of jumping over the gaps:
+
+- **Bye week** (tinted) — the league plays but the Benders don't. Six of these.
+- **No games — league off** (grey) — nobody plays. Eight of these, including the
+  long Halloween-through-mid-November break.
+
+The whole-division view skips the bye markers, since it already lists the games
+the other teams are playing that night.
+
 ## Team sync
 
 The pill under the title says which mode you're in:
@@ -150,4 +162,7 @@ scripts/parse_excel.py  Excel → JSON converter
 
 2026 Winter C2 Division — 63 games total, 22 of them Benders regular season,
 plus 8 playoff slots. Aug 15 2026 through May 10 2027, Saturdays at the West
-Rink except for four Monday playoff dates.
+Rink except for three Monday playoff dates.
+
+42 date rows in all: 28 with hockey for us, 6 bye weeks, 8 weeks with no games.
+Every Saturday between the opener and Apr 17 is accounted for.

@@ -14,7 +14,15 @@
   var PLAYERS = window.PLAYERS || [];
   var SCHEDULE = window.SCHEDULE || { games: [], title: "", team: "Benders" };
   var GAMES = SCHEDULE.games;
+  /* Every date row in the league sheet, including the ones nobody plays, so
+   * the grid lines up with a calendar instead of jumping over the gaps. */
+  var DATES = SCHEDULE.dates || [];
   var TEAM = SCHEDULE.team || "Benders";
+
+  var NOTE_LABEL = {
+    bye: "Bye week — no " + TEAM + " game",
+    off: "No games — league off"
+  };
 
   var STORAGE_KEY = "benders-availability-v1";
   var PREFS_KEY = "benders-prefs-v1";
@@ -496,11 +504,40 @@
   /* what to show                                                        */
   /* ------------------------------------------------------------------ */
 
-  function visibleGames() {
-    var today = todayISO();
-    if (prefs.scope === "all") return GAMES;
-    if (prefs.scope === "benders") return GAMES.filter(isMarkable);
-    return GAMES.filter(function (g) { return isMarkable(g) && g.date >= today; });
+  /* One list of everything the grid draws: game rows, plus slim marker rows
+   * for bye weeks and weeks with no hockey at all. */
+  function visibleRows() {
+    var rows = [];
+    var showAll = prefs.scope === "all";
+
+    GAMES.forEach(function (game) {
+      if (!showAll && !isMarkable(game)) return;
+      rows.push({ type: "game", game: game, date: game.date, slot: game.slot });
+    });
+
+    DATES.forEach(function (entry) {
+      if (entry.kind === "play") return;
+      /* In the whole-division view a bye week already shows the other teams'
+       * games, so only the truly empty weeks need a marker. */
+      if (showAll && entry.kind !== "off") return;
+      rows.push({ type: "note", note: entry, date: entry.date, slot: -1 });
+    });
+
+    rows.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return a.slot - b.slot;
+    });
+
+    if (prefs.scope === "upcoming") {
+      var today = todayISO();
+      rows = rows.filter(function (row) { return row.date >= today; });
+    }
+    return rows;
+  }
+
+  function gamesIn(rows) {
+    return rows.filter(function (row) { return row.type === "game"; })
+      .map(function (row) { return row.game; });
   }
 
   function visiblePlayers() {
@@ -589,7 +626,8 @@
       }
     });
 
-    var count = makeCell("span", "count", String(skatersIn) + "<small>skaters</small>");
+    var count = makeCell("span", "count",
+      String(skatersIn) + "<small>" + (skatersIn === 1 ? "skater" : "skaters") + "</small>");
     if (skatersIn > 0 && skatersIn < 8) count.classList.add("thin");
     td.appendChild(count);
     if (goalieIn) td.appendChild(makeCell("span", "count", "<small>+ goalie</small>"));
@@ -597,11 +635,32 @@
     return td;
   }
 
-  function renderBody(games, players, nextKey) {
+  function renderNoteRow(entry, players, isPast) {
+    var tr = makeCell("tr", "note-row" + (isPast ? " is-past" : ""));
+    tr.dataset.kind = entry.kind;
+
+    var day = entry.weekday === "Saturday" ? "" : entry.weekday.slice(0, 3) + " ";
+    var td = makeCell("td", "col-date date-cell");
+    td.appendChild(makeCell("span", "d1", day + formatDate(entry.date)));
+    tr.appendChild(td);
+
+    var fill = makeCell("td", "note-fill", NOTE_LABEL[entry.kind] || "");
+    fill.colSpan = players.length + 1;
+    tr.appendChild(fill);
+    return tr;
+  }
+
+  function renderBody(rows, players, nextKey) {
     var tbody = makeCell("tbody");
     var today = todayISO();
 
-    games.forEach(function (game) {
+    rows.forEach(function (row) {
+      if (row.type === "note") {
+        tbody.appendChild(renderNoteRow(row.note, players, row.date < today));
+        return;
+      }
+
+      var game = row.game;
       var key = gameKey(game);
       var tr = makeCell("tr");
       tr.dataset.game = key;
@@ -638,8 +697,8 @@
     return tbody;
   }
 
-  function renderFoot(games, players) {
-    var markable = games.filter(isMarkable);
+  function renderFoot(rows, players) {
+    var markable = gamesIn(rows).filter(isMarkable);
     var tfoot = makeCell("tfoot");
     var tr = makeCell("tr");
     tr.appendChild(makeCell("th", "col-date", "In / " + markable.length + " games"));
@@ -666,14 +725,14 @@
   }
 
   function render() {
-    var games = visibleGames();
+    var rows = visibleRows();
     var players = visiblePlayers();
     var next = nextGame();
     var nextKey = next ? gameKey(next) : null;
 
     el.grid.innerHTML = "";
 
-    if (!games.length || !players.length) {
+    if (!rows.length || !players.length) {
       el.gridWrap.hidden = true;
       el.empty.hidden = false;
       el.empty.textContent = !players.length
@@ -683,8 +742,8 @@
       el.gridWrap.hidden = false;
       el.empty.hidden = true;
       el.grid.appendChild(renderHead(players));
-      el.grid.appendChild(renderBody(games, players, nextKey));
-      el.grid.appendChild(renderFoot(games, players));
+      el.grid.appendChild(renderBody(rows, players, nextKey));
+      el.grid.appendChild(renderFoot(rows, players));
     }
 
     renderFooterStats(next);
@@ -707,7 +766,8 @@
     el.footerStats.textContent =
       "Next: " + formatDate(next.date) + " " + next.time +
       (opponent ? " vs " + opponent : "") +
-      " — " + skaters + " skaters" + (goalie ? " + goalie" : ", no goalie yet") + " confirmed.";
+      " — " + skaters + (skaters === 1 ? " skater" : " skaters") +
+      (goalie ? " + goalie" : ", no goalie yet") + " confirmed.";
   }
 
   /* ------------------------------------------------------------------ */
@@ -753,16 +813,16 @@
 
   /* Cheaper than a full re-render on every click. */
   function refreshTotals() {
-    var games = visibleGames();
+    var rows = visibleRows();
     var players = visiblePlayers();
-    var rows = el.grid.querySelectorAll("tbody tr");
-    games.forEach(function (game, i) {
-      var row = rows[i];
-      if (!row) return;
-      row.replaceChild(renderRowTotal(game, players), row.lastElementChild);
+    rows.forEach(function (row) {
+      if (row.type !== "game") return;
+      var tr = el.grid.querySelector('tbody tr[data-game="' + gameKey(row.game) + '"]');
+      if (!tr) return;
+      tr.replaceChild(renderRowTotal(row.game, players), tr.lastElementChild);
     });
     var tfoot = el.grid.querySelector("tfoot");
-    if (tfoot) el.grid.replaceChild(renderFoot(games, players), tfoot);
+    if (tfoot) el.grid.replaceChild(renderFoot(rows, players), tfoot);
     renderFooterStats(nextGame());
   }
 

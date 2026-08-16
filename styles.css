@@ -281,6 +281,23 @@ tr.is-next .date-cell .d1::after {
   vertical-align: 1px;
 }
 
+/* Weeks with no game for us: kept in the grid so it reads like a calendar. */
+.note-row .date-cell { padding-top: 5px !important; padding-bottom: 5px !important; }
+.note-row .date-cell .d1 { font-weight: 500; color: var(--ink-soft); }
+
+.note-fill {
+  padding: 0 12px !important;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  background: var(--bg);
+}
+
+.note-row[data-kind="bye"] .note-fill { color: var(--accent); background: var(--accent-soft); }
+.note-row[data-kind="bye"] .date-cell { background: var(--accent-soft); }
+.note-row[data-kind="bye"] .date-cell .d1 { color: var(--accent); }
+.note-row[data-kind="off"] .date-cell { background: var(--bg); }
+
 tr.is-other .date-cell .d1 { color: var(--ink-soft); font-weight: 500; }
 tr.is-other .cell { background: repeating-linear-gradient(45deg, transparent, transparent 5px, var(--bg) 5px, var(--bg) 10px); }
 
