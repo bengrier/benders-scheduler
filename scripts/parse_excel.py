@@ -61,7 +61,15 @@ def parse_players():
             "first": first,
             "last": last or first,
             "role": role,
+            # Used as a database path segment, so no dots, spaces or slashes.
+            "key": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"),
         })
+
+    keys = [p["key"] for p in players]
+    dupes = {k for k in keys if keys.count(k) > 1}
+    if dupes:
+        raise SystemExit(f"Duplicate player keys, names are too similar: {dupes}")
+
     return players
 
 

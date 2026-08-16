@@ -3,84 +3,98 @@
     "name": "James Bennett",
     "first": "James",
     "last": "Bennett",
-    "role": "skater"
+    "role": "skater",
+    "key": "james-bennett"
   },
   {
     "name": "Todd Brownell",
     "first": "Todd",
     "last": "Brownell",
-    "role": "captain"
+    "role": "captain",
+    "key": "todd-brownell"
   },
   {
     "name": "Jason Cumbers",
     "first": "Jason",
     "last": "Cumbers",
-    "role": "skater"
+    "role": "skater",
+    "key": "jason-cumbers"
   },
   {
     "name": "Samuel Eddy",
     "first": "Samuel",
     "last": "Eddy",
-    "role": "skater"
+    "role": "skater",
+    "key": "samuel-eddy"
   },
   {
     "name": "Graham Geary",
     "first": "Graham",
     "last": "Geary",
-    "role": "skater"
+    "role": "skater",
+    "key": "graham-geary"
   },
   {
     "name": "Dan Gerdes",
     "first": "Dan",
     "last": "Gerdes",
-    "role": "skater"
+    "role": "skater",
+    "key": "dan-gerdes"
   },
   {
     "name": "Brenton Goodman",
     "first": "Brenton",
     "last": "Goodman",
-    "role": "skater"
+    "role": "skater",
+    "key": "brenton-goodman"
   },
   {
     "name": "Kyle Gordon",
     "first": "Kyle",
     "last": "Gordon",
-    "role": "skater"
+    "role": "skater",
+    "key": "kyle-gordon"
   },
   {
     "name": "Ben Grier",
     "first": "Ben",
     "last": "Grier",
-    "role": "skater"
+    "role": "skater",
+    "key": "ben-grier"
   },
   {
     "name": "Josh Gundy",
     "first": "Josh",
     "last": "Gundy",
-    "role": "skater"
+    "role": "skater",
+    "key": "josh-gundy"
   },
   {
     "name": "Mark Koenig",
     "first": "Mark",
     "last": "Koenig",
-    "role": "goalie"
+    "role": "goalie",
+    "key": "mark-koenig"
   },
   {
     "name": "Justin McLaughlin",
     "first": "Justin",
     "last": "McLaughlin",
-    "role": "skater"
+    "role": "skater",
+    "key": "justin-mclaughlin"
   },
   {
     "name": "Jeremiah Stilson",
     "first": "Jeremiah",
     "last": "Stilson",
-    "role": "skater"
+    "role": "skater",
+    "key": "jeremiah-stilson"
   },
   {
     "name": "Jake Vicini",
     "first": "Jake",
     "last": "Vicini",
-    "role": "skater"
+    "role": "skater",
+    "key": "jake-vicini"
   }
 ]

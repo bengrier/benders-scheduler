@@ -13,6 +13,7 @@
   <div class="topbar-main">
     <h1>Benders Availability</h1>
     <p class="subtitle" id="season-line">C2 Division</p>
+    <p class="sync-pill" id="sync-pill" data-state="off"><span class="dot"></span><span id="sync-text">Local only</span></p>
   </div>
   <div class="topbar-actions">
     <button type="button" id="btn-share" class="btn">Copy share link</button>
@@ -47,10 +48,9 @@
 
   <div class="field field-inline">
     <label class="check"><input type="checkbox" id="toggle-mine"> Only my column</label>
-    <label class="check"><input type="checkbox" id="toggle-compact"> Compact</label>
   </div>
 
-  <p class="hint">Click a cell to cycle <b class="k k-in">In</b> → <b class="k k-out">Out</b> → <b class="k k-maybe">Maybe</b> → blank. Everything saves in this browser.</p>
+  <p class="hint">Click a cell to cycle <b class="k k-in">In</b> → <b class="k k-out">Out</b> → <b class="k k-maybe">Maybe</b> → blank. <span id="hint-storage">Everything saves in this browser.</span></p>
 </section>
 
 <main>
@@ -62,12 +62,13 @@
 
 <footer class="footer">
   <span id="footer-stats"></span>
-  <span class="footer-note">Saved locally in this browser · <a href="https://github.com/bengrier/benders-scheduler">source</a></span>
+  <span class="footer-note" id="footer-note"><a href="https://github.com/bengrier/benders-scheduler">source</a></span>
 </footer>
 
 <div class="toast" id="toast" hidden></div>
 
 <script src="data/data.js"></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

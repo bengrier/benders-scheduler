@@ -1,8 +1,11 @@
 /* Benders availability grid.
  *
  * Rows are game dates, columns are players, cells are one of four states.
- * Everything lives in localStorage -- there is no server and no login. The
- * share link and Export/Import buttons are how state moves between people.
+ *
+ * With SYNC_URL unset (see config.js) everything lives in localStorage and the
+ * share link / export buttons are how state moves between people. With it set,
+ * the whole team shares one live grid over a Firebase Realtime Database --
+ * plain REST plus an EventSource stream, no SDK and no logins.
  */
 
 (function () {
@@ -19,10 +22,11 @@
   var GLYPH = { in: "✓", out: "✗", maybe: "?" };
   var STATUS_CHAR = { "": ".", in: "i", out: "o", maybe: "m" };
   var CHAR_STATUS = { ".": "", i: "in", o: "out", m: "maybe" };
+  var VALID_STATUS = { in: 1, out: 1, maybe: 1 };
 
   /* state[gameKey][playerName] = "in" | "out" | "maybe" */
   var state = {};
-  var prefs = { me: "", scope: "upcoming", onlyMine: false, compact: false };
+  var prefs = { me: "", scope: "upcoming", onlyMine: false };
 
   var el = {
     grid: document.getElementById("grid"),
@@ -32,9 +36,12 @@
     me: document.getElementById("me-select"),
     scope: document.getElementById("game-scope"),
     onlyMine: document.getElementById("toggle-mine"),
-    compact: document.getElementById("toggle-compact"),
     seasonLine: document.getElementById("season-line"),
     footerStats: document.getElementById("footer-stats"),
+    footerNote: document.getElementById("footer-note"),
+    hintStorage: document.getElementById("hint-storage"),
+    syncPill: document.getElementById("sync-pill"),
+    syncText: document.getElementById("sync-text"),
     toast: document.getElementById("toast")
   };
 
@@ -87,11 +94,11 @@
     el.toast.textContent = message;
     el.toast.hidden = false;
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(function () { el.toast.hidden = true; }, 2200);
+    toast.timer = setTimeout(function () { el.toast.hidden = true; }, 2600);
   }
 
   /* ------------------------------------------------------------------ */
-  /* persistence                                                         */
+  /* local persistence                                                   */
   /* ------------------------------------------------------------------ */
 
   function save() {
@@ -122,6 +129,298 @@
       if (saved) Object.assign(prefs, saved);
     } catch (err) { /* keep defaults */ }
   }
+
+  /* ------------------------------------------------------------------ */
+  /* team sync                                                           */
+  /* ------------------------------------------------------------------ */
+
+  /* Firebase paths can't contain "." "#" "$" "[" "]" or "/", so games travel
+   * as "2026-08-15_1" and players as the slug baked in by parse_excel.py. */
+  var Sync = (function () {
+    var base = String(window.SYNC_URL || "").trim().replace(/\/+$/, "");
+    var enabled = /^https?:\/\/[^\s]+$/.test(base);
+    var root = base + "/availability";
+    var stream = null;
+    var seenFirstPayload = false;
+    var recentWrites = {};
+    /* Marks this browser has that the server does not: everything made before
+     * sync was first switched on, plus anything written while disconnected.
+     * Flushed on every full-tree payload, which is also what arrives after a
+     * reconnect -- otherwise that payload would look like a mass deletion and
+     * wipe them. */
+    var pending = {};
+    var handlers = {};
+
+    var nameByKey = {};
+    var keyByName = {};
+    PLAYERS.forEach(function (p) {
+      nameByKey[p.key] = p.name;
+      keyByName[p.name] = p.key;
+    });
+
+    function toRemoteGame(key) { return key.replace("#", "_"); }
+    function toLocalGame(key) { return key.replace("_", "#"); }
+
+    function setStatusPill(nextState, text) {
+      el.syncPill.dataset.state = nextState;
+      el.syncText.textContent = text;
+    }
+
+    /* Our own writes echo back down the stream; don't flash them as if a
+     * teammate had made the change. */
+    function markOwnWrite(gk, name) {
+      var id = gk + "|" + name;
+      recentWrites[id] = Date.now();
+      setTimeout(function () { delete recentWrites[id]; }, 6000);
+    }
+
+    function isOwnWrite(gk, name) {
+      return Object.prototype.hasOwnProperty.call(recentWrites, gk + "|" + name);
+    }
+
+    function applyCell(remoteGame, playerKey, value, changes) {
+      var name = nameByKey[playerKey];
+      if (!name) return;
+      var gk = toLocalGame(remoteGame);
+      var status = VALID_STATUS[value] ? value : "";
+      if (getStatus(gk, name) === status) return;
+      setStatus(gk, name, status);
+      changes.push({ gameKey: gk, name: name, foreign: !isOwnWrite(gk, name) });
+    }
+
+    function applyGame(remoteGame, data, changes) {
+      var existing = state[toLocalGame(remoteGame)] || {};
+      /* Anyone missing from the incoming object has been cleared. */
+      Object.keys(existing).forEach(function (name) {
+        var key = keyByName[name];
+        if (!data || !Object.prototype.hasOwnProperty.call(data, key)) {
+          applyCell(remoteGame, key, null, changes);
+        }
+      });
+      Object.keys(data || {}).forEach(function (playerKey) {
+        applyCell(remoteGame, playerKey, data[playerKey], changes);
+      });
+    }
+
+    function applyTree(data, changes) {
+      var incoming = data || {};
+      Object.keys(state).forEach(function (gk) {
+        var remote = toRemoteGame(gk);
+        if (!Object.prototype.hasOwnProperty.call(incoming, remote)) {
+          applyGame(remote, null, changes);
+        }
+      });
+      Object.keys(incoming).forEach(function (remote) {
+        applyGame(remote, incoming[remote], changes);
+      });
+    }
+
+    /* Firebase reports the path the change happened at, which can be the whole
+     * tree, one game, or one cell depending on how the write was made. */
+    function apply(path, data, isPatch) {
+      var parts = String(path || "/").split("/").filter(Boolean);
+      var changes = [];
+
+      if (parts.length >= 2) {
+        applyCell(parts[0], parts[1], data, changes);
+      } else if (parts.length === 1) {
+        if (isPatch) {
+          Object.keys(data || {}).forEach(function (playerKey) {
+            applyCell(parts[0], playerKey, data[playerKey], changes);
+          });
+        } else {
+          applyGame(parts[0], data, changes);
+        }
+      } else if (isPatch) {
+        Object.keys(data || {}).forEach(function (remote) {
+          applyGame(remote, data[remote], changes);
+        });
+      } else {
+        applyTree(data, changes);
+      }
+
+      if (changes.length) {
+        save();
+        handlers.onChange(changes);
+      }
+    }
+
+    function queuePending(gk, name, status) {
+      pending[gk + "|" + name] = { gameKey: gk, name: name, status: status };
+    }
+
+    /* On the very first payload the server wins for any cell it already knows
+     * about; only genuinely unseen marks are queued. `snapshot` is local state
+     * from *before* that payload was applied. */
+    function queueUnsyncedMarks(snapshot, remoteTree) {
+      Object.keys(snapshot).forEach(function (gk) {
+        var remoteGame = (remoteTree || {})[toRemoteGame(gk)] || {};
+        Object.keys(snapshot[gk]).forEach(function (name) {
+          var key = keyByName[name];
+          if (!key) return;
+          if (Object.prototype.hasOwnProperty.call(remoteGame, key)) return;
+          queuePending(gk, name, snapshot[gk][name]);
+        });
+      });
+    }
+
+    /* Put queued marks back into the grid and send them up in one write. */
+    function flushPending() {
+      var ids = Object.keys(pending);
+      if (!ids.length) return;
+
+      var updates = {};
+      var restored = [];
+      ids.forEach(function (id) {
+        var entry = pending[id];
+        var key = keyByName[entry.name];
+        if (!key) return;
+        updates[toRemoteGame(entry.gameKey) + "/" + key] = entry.status || null;
+        markOwnWrite(entry.gameKey, entry.name);
+        if (getStatus(entry.gameKey, entry.name) !== entry.status) {
+          setStatus(entry.gameKey, entry.name, entry.status);
+          restored.push({ gameKey: entry.gameKey, name: entry.name, foreign: false });
+        }
+      });
+
+      if (restored.length) {
+        save();
+        handlers.onChange(restored);
+      }
+
+      var count = ids.length;
+      request("PATCH", root + ".json", updates).then(function () {
+        ids.forEach(function (id) { delete pending[id]; });
+        toast("Synced " + count + " of your mark" + (count === 1 ? "" : "s") +
+          " to the team grid.");
+      }, function () {
+        toast("Couldn't sync your offline marks yet — they're still saved here.");
+      });
+    }
+
+    function request(method, url, body) {
+      return fetch(url, {
+        method: method,
+        headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      }).then(function (response) {
+        if (!response.ok) throw new Error(method + " " + response.status);
+        return response;
+      });
+    }
+
+    function connect() {
+      setStatusPill("connecting", "Connecting…");
+      try {
+        stream = new EventSource(root + ".json");
+      } catch (err) {
+        setStatusPill("error", "Sync unavailable");
+        return;
+      }
+
+      stream.addEventListener("open", function () {
+        setStatusPill("live", "Team sync on");
+      });
+
+      stream.addEventListener("put", function (event) {
+        var payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (err) {
+          return;
+        }
+        /* A payload at the root is the whole tree: the initial one, and the
+         * one that arrives again after every reconnect. */
+        var isRoot = payload.path === "/" || !payload.path;
+        var snapshot = isRoot && !seenFirstPayload
+          ? JSON.parse(JSON.stringify(state))
+          : null;
+
+        apply(payload.path, payload.data, false);
+
+        if (snapshot) {
+          seenFirstPayload = true;
+          queueUnsyncedMarks(snapshot, payload.data);
+        }
+        if (isRoot) flushPending();
+        setStatusPill("live", "Team sync on");
+      });
+
+      stream.addEventListener("patch", function (event) {
+        try {
+          var payload = JSON.parse(event.data);
+          apply(payload.path, payload.data, true);
+        } catch (err) { /* ignore malformed frames */ }
+      });
+
+      /* EventSource retries on its own; just reflect that in the pill. */
+      stream.addEventListener("error", function () {
+        setStatusPill(stream.readyState === 2 ? "error" : "connecting",
+          stream.readyState === 2 ? "Sync disconnected" : "Reconnecting…");
+      });
+    }
+
+    return {
+      enabled: enabled,
+
+      start: function (opts) {
+        handlers = opts;
+        if (!enabled) {
+          setStatusPill("off", "This browser only");
+          el.syncPill.title = "Team sync is off. See the README to switch it on.";
+          return;
+        }
+        connect();
+      },
+
+      /* Per-cell writes so two people editing different cells never clobber
+       * each other. */
+      push: function (gk, name, status) {
+        if (!enabled) return;
+        var key = keyByName[name];
+        if (!key) return;
+        markOwnWrite(gk, name);
+        var url = root + "/" + toRemoteGame(gk) + "/" + key + ".json";
+        var call = status
+          ? request("PUT", url, status)
+          : request("DELETE", url);
+
+        call.then(function () {
+          delete pending[gk + "|" + name];
+        }, function () {
+          /* Retried the next time the stream delivers a full tree. */
+          queuePending(gk, name, status);
+          toast("Offline — saved here and queued for the team grid.");
+          setStatusPill("error", "Sync failed");
+        });
+      },
+
+      replaceAll: function (nextState) {
+        if (!enabled) return Promise.resolve();
+        pending = {};
+        var tree = {};
+        Object.keys(nextState).forEach(function (gk) {
+          var out = {};
+          Object.keys(nextState[gk]).forEach(function (name) {
+            var key = keyByName[name];
+            if (key) out[key] = nextState[gk][name];
+          });
+          if (Object.keys(out).length) tree[toRemoteGame(gk)] = out;
+        });
+        return request("PUT", root + ".json", tree).catch(function () {
+          toast("Couldn't write to the team grid.");
+        });
+      },
+
+      clearAll: function () {
+        if (!enabled) return Promise.resolve();
+        pending = {};
+        return request("DELETE", root + ".json").catch(function () {
+          toast("Couldn't clear the team grid.");
+        });
+      }
+    };
+  })();
 
   /* ---- share link -------------------------------------------------- */
 
@@ -182,12 +481,14 @@
       toast("That share link doesn't match the current roster/schedule.");
       return;
     }
-    var hasLocal = Object.keys(state).length > 0;
-    if (hasLocal && !confirm("Load the shared availability? This replaces what's in this browser.")) {
-      return;
-    }
+    var question = Sync.enabled
+      ? "Load this shared availability? It replaces the whole team grid."
+      : "Load the shared availability? This replaces what's in this browser.";
+    if (Object.keys(state).length && !confirm(question)) return;
+
     state = incoming;
     save();
+    Sync.replaceAll(state);
     toast("Loaded shared availability.");
   }
 
@@ -230,7 +531,7 @@
     players.forEach(function (p) {
       var th = makeCell("th", "player-head" + (p.name === prefs.me ? " is-me" : ""));
       th.scope = "col";
-      th.title = p.name;
+      th.title = p.name + (p.role === "goalie" ? " (goalie)" : p.role === "captain" ? " (captain)" : "");
       var tag = p.role === "goalie" ? " <span class=\"tag\">(G)</span>"
         : p.role === "captain" ? " <span class=\"tag\">(C)</span>" : "";
       th.appendChild(makeCell("span", "name", p.first + " " + p.last + tag));
@@ -245,17 +546,23 @@
   function renderDateCell(game, isNext) {
     var td = makeCell("td", "col-date date-cell");
     var opponent = opponentOf(game);
-    var headline = game.playoff
+    var matchup = game.playoff
       ? "Playoff " + (game.label || "") + " — " + (game.home || "TBD") + (game.away ? " vs " + game.away : "")
       : opponent ? "vs " + opponent
         : game.home + " vs " + game.away;
 
-    td.appendChild(makeCell("span", "d1", formatDate(game.date)));
-    td.appendChild(makeCell("span", "d2", headline));
-    var detail = game.weekday + " · " + game.time + " · " + game.rink;
-    td.appendChild(makeCell("span", "d3", detail));
-    /* The three lines are clipped to keep row heights uniform. */
-    td.title = formatDate(game.date) + " — " + headline + "\n" + detail +
+    /* Nearly every game is a Saturday, so only call out the exceptions. */
+    var day = game.weekday === "Saturday" ? "" : game.weekday.slice(0, 3) + " ";
+
+    /* The time shares the second line with the matchup because two different
+     * games can fall on the same date -- without it those rows look identical
+     * in the "Every C2 game" view. */
+    td.appendChild(makeCell("span", "d1", day + formatDate(game.date)));
+    td.appendChild(makeCell("span", "d2",
+      "<b>" + game.time + "</b> · " + matchup));
+
+    td.title = game.weekday + " " + formatDate(game.date) + "\n" +
+      game.time + " · " + game.rink + "\n" + matchup +
       (isNext ? "\n(next game)" : "");
     return td;
   }
@@ -297,6 +604,7 @@
     games.forEach(function (game) {
       var key = gameKey(game);
       var tr = makeCell("tr");
+      tr.dataset.game = key;
       if (game.date < today) tr.classList.add("is-past");
       if (key === nextKey) tr.classList.add("is-next");
       if (!isMarkable(game)) tr.classList.add("is-other");
@@ -308,7 +616,6 @@
         if (p.name === prefs.me) td.classList.add("is-me-col");
 
         if (!isMarkable(game)) {
-          td.classList.remove("cell");
           td.className = "cell is-locked";
           td.style.cursor = "default";
           tr.appendChild(td);
@@ -353,15 +660,18 @@
     return tfoot;
   }
 
+  function nextGame() {
+    var today = todayISO();
+    return GAMES.find(function (g) { return isMarkable(g) && g.date >= today; });
+  }
+
   function render() {
     var games = visibleGames();
     var players = visiblePlayers();
-    var today = todayISO();
-    var next = GAMES.find(function (g) { return isMarkable(g) && g.date >= today; });
+    var next = nextGame();
     var nextKey = next ? gameKey(next) : null;
 
     el.grid.innerHTML = "";
-    document.body.classList.toggle("compact", prefs.compact);
 
     if (!games.length || !players.length) {
       el.gridWrap.hidden = true;
@@ -412,10 +722,33 @@
 
     setStatus(td.dataset.key, td.dataset.player, next);
     save();
+    Sync.push(td.dataset.key, td.dataset.player, next);
 
     td.dataset.status = next;
     td.textContent = GLYPH[next] || "";
     refreshTotals();
+  }
+
+  /* Repaint just the cells a remote change touched, so nobody loses their
+   * scroll position mid-edit. */
+  function applyRemoteChanges(changes) {
+    var touched = false;
+    changes.forEach(function (change) {
+      var row = el.grid.querySelector('tbody tr[data-game="' + change.gameKey + '"]');
+      if (!row) return;
+      var td = row.querySelector('td.cell[data-player="' + CSS.escape(change.name) + '"]');
+      if (!td) return;
+      var status = getStatus(change.gameKey, change.name);
+      td.dataset.status = status;
+      td.textContent = GLYPH[status] || "";
+      if (change.foreign) {
+        td.classList.remove("just-synced");
+        void td.offsetWidth;
+        td.classList.add("just-synced");
+      }
+      touched = true;
+    });
+    if (touched || changes.length) refreshTotals();
   }
 
   /* Cheaper than a full re-render on every click. */
@@ -430,9 +763,7 @@
     });
     var tfoot = el.grid.querySelector("tfoot");
     if (tfoot) el.grid.replaceChild(renderFoot(games, players), tfoot);
-    renderFooterStats(GAMES.find(function (g) {
-      return isMarkable(g) && g.date >= todayISO();
-    }));
+    renderFooterStats(nextGame());
   }
 
   function exportJSON() {
@@ -465,8 +796,13 @@
         toast("No availability data in that file.");
         return;
       }
+      if (Sync.enabled &&
+        !confirm("Import replaces the whole team grid, for everyone. Continue?")) {
+        return;
+      }
       state = incoming;
       save();
+      Sync.replaceAll(state);
       render();
       toast("Imported.");
     };
@@ -496,7 +832,6 @@
 
   function wire() {
     el.grid.addEventListener("click", onGridClick);
-
     el.filter.addEventListener("input", render);
 
     PLAYERS.forEach(function (p) {
@@ -509,7 +844,6 @@
     el.me.value = prefs.me;
     el.scope.value = prefs.scope;
     el.onlyMine.checked = prefs.onlyMine;
-    el.compact.checked = prefs.compact;
 
     el.me.addEventListener("change", function () {
       prefs.me = el.me.value;
@@ -535,12 +869,6 @@
       render();
     });
 
-    el.compact.addEventListener("change", function () {
-      prefs.compact = el.compact.checked;
-      savePrefs();
-      render();
-    });
-
     document.getElementById("btn-export").addEventListener("click", exportJSON);
     document.getElementById("btn-share").addEventListener("click", copyShareLink);
 
@@ -554,12 +882,28 @@
     });
 
     document.getElementById("btn-reset").addEventListener("click", function () {
-      if (!confirm("Clear every mark in this browser? Export first if you want a copy.")) return;
+      var question = Sync.enabled
+        ? "Clear every mark for the whole team? Export first if you want a copy."
+        : "Clear every mark in this browser? Export first if you want a copy.";
+      if (!confirm(question)) return;
       state = {};
       save();
+      Sync.clearAll();
       render();
       toast("Cleared.");
     });
+  }
+
+  function describeStorage() {
+    if (Sync.enabled) {
+      el.hintStorage.textContent = "Everyone shares one live grid — mark your own row from any device.";
+      el.footerNote.innerHTML =
+        "Shared team grid · <a href=\"https://github.com/bengrier/benders-scheduler\">source</a>";
+    } else {
+      el.hintStorage.textContent = "Everything saves in this browser.";
+      el.footerNote.innerHTML =
+        "Saved locally in this browser · <a href=\"https://github.com/bengrier/benders-scheduler\">source</a>";
+    }
   }
 
   function init() {
@@ -574,8 +918,10 @@
     readSharedState();
     el.seasonLine.textContent = SCHEDULE.title + " · " + TEAM;
     document.title = TEAM + " Availability — " + SCHEDULE.title;
+    describeStorage();
     wire();
     render();
+    Sync.start({ onChange: applyRemoteChanges });
   }
 
   init();
