@@ -1,0 +1,16 @@
+name = "benders-availability"
+main = "src/worker.js"
+compatibility_date = "2026-08-01"
+
+# One object holds the whole season and serialises every write.
+[[durable_objects.bindings]]
+name = "SEASON"
+class_name = "SeasonRoom"
+
+# SQLite-backed classes are the ones available on the Workers free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SeasonRoom"]
+
+# TEAM_SECRET is set with `wrangler secret put TEAM_SECRET`, never committed.
+# Local `wrangler dev` picks it up from worker/.dev.vars instead.

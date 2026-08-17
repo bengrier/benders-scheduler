@@ -3,9 +3,13 @@
  * Rows are game dates, columns are players, cells are one of four states.
  *
  * With SYNC_URL unset (see config.js) everything lives in localStorage and the
- * share link / export buttons are how state moves between people. With it set,
- * the whole team shares one live grid over a Firebase Realtime Database --
- * plain REST plus an EventSource stream, no SDK and no logins.
+ * share link / export buttons are how state moves between people.
+ *
+ * With it set, the whole team shares one live grid served by the Cloudflare
+ * Worker in worker/. Each player opens a personal link once, which claims
+ * their column: from then on they can only change their own row, so a mis-tap
+ * on a crowded phone screen can't land on somebody else's availability. The
+ * Worker enforces that, not just the interface.
  */
 
 (function () {
@@ -26,6 +30,7 @@
 
   var STORAGE_KEY = "benders-availability-v1";
   var PREFS_KEY = "benders-prefs-v1";
+  var IDENTITY_KEY = "benders-identity-v1";
   var CYCLE = ["", "in", "out", "maybe"];
   var GLYPH = { in: "✓", out: "✗", maybe: "?" };
   var STATUS_CHAR = { "": ".", in: "i", out: "o", maybe: "m" };
@@ -35,6 +40,13 @@
   /* state[gameKey][playerName] = "in" | "out" | "maybe" */
   var state = {};
   var prefs = { me: "", scope: "upcoming", onlyMine: false };
+
+  var nameByKey = {};
+  var keyByName = {};
+  PLAYERS.forEach(function (p) {
+    nameByKey[p.key] = p.name;
+    keyByName[p.name] = p.key;
+  });
 
   var el = {
     grid: document.getElementById("grid"),
@@ -102,7 +114,7 @@
     el.toast.textContent = message;
     el.toast.hidden = false;
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(function () { el.toast.hidden = true; }, 2600);
+    toast.timer = setTimeout(function () { el.toast.hidden = true; }, 3200);
   }
 
   /* ------------------------------------------------------------------ */
@@ -139,43 +151,100 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* team sync                                                           */
+  /* identity                                                            */
   /* ------------------------------------------------------------------ */
 
-  /* Firebase paths can't contain "." "#" "$" "[" "]" or "/", so games travel
-   * as "2026-08-15_1" and players as the slug baked in by parse_excel.py. */
+  /* Who this browser is allowed to mark for. Claimed by opening a personal
+   * link once (#me=<key>&k=<code>) and remembered from then on. */
+  var Identity = (function () {
+    var current = { player: "", code: "", captain: false };
+
+    function persist() {
+      try {
+        localStorage.setItem(IDENTITY_KEY, JSON.stringify(current));
+      } catch (err) { /* nothing we can do */ }
+    }
+
+    return {
+      load: function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem(IDENTITY_KEY));
+          if (saved && saved.code) Object.assign(current, saved);
+        } catch (err) { /* keep the empty identity */ }
+      },
+
+      /* Personal links look like  .../#me=ben-grier&k=ab3d9  */
+      claimFromHash: function () {
+        var hash = location.hash.replace(/^#/, "");
+        if (!/(^|&)k=/.test(hash)) return false;
+        var params = new URLSearchParams(hash);
+        var code = params.get("k") || "";
+        if (!code) return false;
+
+        current.player = params.get("me") || "";
+        current.code = code;
+        current.captain = false;
+        persist();
+        history.replaceState(null, "", location.pathname + location.search);
+        return true;
+      },
+
+      /* The server is the authority; it tells us what the code really is. */
+      confirm: function (you) {
+        if (!you) {
+          if (current.code) {
+            current.code = "";
+            current.player = "";
+            current.captain = false;
+            persist();
+            toast("That personal link is no longer valid — ask for a new one.");
+          }
+          return;
+        }
+        current.player = you.player || current.player;
+        current.captain = !!you.captain;
+        persist();
+      },
+
+      get: function () { return current; },
+      name: function () { return nameByKey[current.player] || ""; },
+      clear: function () {
+        current = { player: "", code: "", captain: false };
+        persist();
+      }
+    };
+  })();
+
+  /* ------------------------------------------------------------------ */
+  /* team sync — Cloudflare Worker + Durable Object                      */
+  /* ------------------------------------------------------------------ */
+
   var Sync = (function () {
     var base = String(window.SYNC_URL || "").trim().replace(/\/+$/, "");
     var enabled = /^https?:\/\/[^\s]+$/.test(base);
-    var root = base + "/availability";
-    var stream = null;
+    var socket = null;
+    var retry = 0;
+    var retryTimer = null;
     var seenFirstPayload = false;
     var recentWrites = {};
-    /* Marks this browser has that the server does not: everything made before
-     * sync was first switched on, plus anything written while disconnected.
-     * Flushed on every full-tree payload, which is also what arrives after a
-     * reconnect -- otherwise that payload would look like a mass deletion and
-     * wipe them. */
+    /* Marks this browser has that the server does not: made before the first
+     * connection, or while offline. Re-sent whenever a full payload arrives,
+     * which is also what shows up after a reconnect -- otherwise that payload
+     * would look like a mass deletion and wipe them. */
     var pending = {};
     var handlers = {};
-
-    var nameByKey = {};
-    var keyByName = {};
-    PLAYERS.forEach(function (p) {
-      nameByKey[p.key] = p.name;
-      keyByName[p.name] = p.key;
-    });
-
-    function toRemoteGame(key) { return key.replace("#", "_"); }
-    function toLocalGame(key) { return key.replace("_", "#"); }
 
     function setStatusPill(nextState, text) {
       el.syncPill.dataset.state = nextState;
       el.syncText.textContent = text;
     }
 
-    /* Our own writes echo back down the stream; don't flash them as if a
-     * teammate had made the change. */
+    function auth() {
+      var id = Identity.get();
+      return "player=" + encodeURIComponent(id.player || "") +
+        "&k=" + encodeURIComponent(id.code || "");
+    }
+
     function markOwnWrite(gk, name) {
       var id = gk + "|" + name;
       recentWrites[id] = Date.now();
@@ -186,104 +255,66 @@
       return Object.prototype.hasOwnProperty.call(recentWrites, gk + "|" + name);
     }
 
-    function applyCell(remoteGame, playerKey, value, changes) {
+    function queuePending(gk, name, status) {
+      pending[gk + "|" + name] = { gameKey: gk, name: name, status: status };
+    }
+
+    function applyCell(gk, playerKey, value, changes) {
       var name = nameByKey[playerKey];
       if (!name) return;
-      var gk = toLocalGame(remoteGame);
       var status = VALID_STATUS[value] ? value : "";
       if (getStatus(gk, name) === status) return;
       setStatus(gk, name, status);
       changes.push({ gameKey: gk, name: name, foreign: !isOwnWrite(gk, name) });
     }
 
-    function applyGame(remoteGame, data, changes) {
-      var existing = state[toLocalGame(remoteGame)] || {};
-      /* Anyone missing from the incoming object has been cleared. */
-      Object.keys(existing).forEach(function (name) {
-        var key = keyByName[name];
-        if (!data || !Object.prototype.hasOwnProperty.call(data, key)) {
-          applyCell(remoteGame, key, null, changes);
-        }
-      });
-      Object.keys(data || {}).forEach(function (playerKey) {
-        applyCell(remoteGame, playerKey, data[playerKey], changes);
-      });
-    }
-
-    function applyTree(data, changes) {
-      var incoming = data || {};
+    function applyTree(tree, changes) {
+      var incoming = tree || {};
+      /* Anything the server no longer lists has been cleared. */
       Object.keys(state).forEach(function (gk) {
-        var remote = toRemoteGame(gk);
-        if (!Object.prototype.hasOwnProperty.call(incoming, remote)) {
-          applyGame(remote, null, changes);
-        }
-      });
-      Object.keys(incoming).forEach(function (remote) {
-        applyGame(remote, incoming[remote], changes);
-      });
-    }
-
-    /* Firebase reports the path the change happened at, which can be the whole
-     * tree, one game, or one cell depending on how the write was made. */
-    function apply(path, data, isPatch) {
-      var parts = String(path || "/").split("/").filter(Boolean);
-      var changes = [];
-
-      if (parts.length >= 2) {
-        applyCell(parts[0], parts[1], data, changes);
-      } else if (parts.length === 1) {
-        if (isPatch) {
-          Object.keys(data || {}).forEach(function (playerKey) {
-            applyCell(parts[0], playerKey, data[playerKey], changes);
-          });
-        } else {
-          applyGame(parts[0], data, changes);
-        }
-      } else if (isPatch) {
-        Object.keys(data || {}).forEach(function (remote) {
-          applyGame(remote, data[remote], changes);
+        var remote = incoming[gk] || {};
+        Object.keys(state[gk]).forEach(function (name) {
+          var key = keyByName[name];
+          if (!key || !Object.prototype.hasOwnProperty.call(remote, key)) {
+            applyCell(gk, key, null, changes);
+          }
         });
-      } else {
-        applyTree(data, changes);
-      }
-
-      if (changes.length) {
-        save();
-        handlers.onChange(changes);
-      }
+      });
+      Object.keys(incoming).forEach(function (gk) {
+        Object.keys(incoming[gk] || {}).forEach(function (key) {
+          applyCell(gk, key, incoming[gk][key], changes);
+        });
+      });
     }
 
-    function queuePending(gk, name, status) {
-      pending[gk + "|" + name] = { gameKey: gk, name: name, status: status };
-    }
-
-    /* On the very first payload the server wins for any cell it already knows
-     * about; only genuinely unseen marks are queued. `snapshot` is local state
-     * from *before* that payload was applied. */
-    function queueUnsyncedMarks(snapshot, remoteTree) {
+    function queueUnsyncedMarks(snapshot, tree) {
       Object.keys(snapshot).forEach(function (gk) {
-        var remoteGame = (remoteTree || {})[toRemoteGame(gk)] || {};
+        var remote = (tree || {})[gk] || {};
         Object.keys(snapshot[gk]).forEach(function (name) {
           var key = keyByName[name];
           if (!key) return;
-          if (Object.prototype.hasOwnProperty.call(remoteGame, key)) return;
+          if (Object.prototype.hasOwnProperty.call(remote, key)) return;
           queuePending(gk, name, snapshot[gk][name]);
         });
       });
     }
 
-    /* Put queued marks back into the grid and send them up in one write. */
+    /* Put queued marks back in the grid and re-send them in one request. */
     function flushPending() {
       var ids = Object.keys(pending);
       if (!ids.length) return;
 
-      var updates = {};
+      var id = Identity.get();
+      if (!id.code) { pending = {}; return; }
+
+      var cells = [];
       var restored = [];
-      ids.forEach(function (id) {
-        var entry = pending[id];
+      ids.forEach(function (entryId) {
+        var entry = pending[entryId];
         var key = keyByName[entry.name];
         if (!key) return;
-        updates[toRemoteGame(entry.gameKey) + "/" + key] = entry.status || null;
+        if (!id.captain && key !== id.player) return;
+        cells.push({ game: entry.gameKey, player: key, status: entry.status || null });
         markOwnWrite(entry.gameKey, entry.name);
         if (getStatus(entry.gameKey, entry.name) !== entry.status) {
           setStatus(entry.gameKey, entry.name, entry.status);
@@ -291,85 +322,140 @@
         }
       });
 
+      if (!cells.length) { pending = {}; return; }
       if (restored.length) {
         save();
         handlers.onChange(restored);
       }
 
-      var count = ids.length;
-      request("PATCH", root + ".json", updates).then(function () {
-        ids.forEach(function (id) { delete pending[id]; });
-        toast("Synced " + count + " of your mark" + (count === 1 ? "" : "s") +
-          " to the team grid.");
+      request("POST", "/bulk", { cells: cells }).then(function () {
+        ids.forEach(function (entryId) { delete pending[entryId]; });
+        toast("Synced " + cells.length + " of your mark" +
+          (cells.length === 1 ? "" : "s") + " to the team grid.");
       }, function () {
         toast("Couldn't sync your offline marks yet — they're still saved here.");
       });
     }
 
-    function request(method, url, body) {
+    function request(method, path, body) {
+      var url = base + path + (path.indexOf("?") < 0 ? "?" : "&") + auth();
       return fetch(url, {
         method: method,
         headers: body === undefined ? undefined : { "Content-Type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body)
       }).then(function (response) {
+        if (response.status === 401 || response.status === 403) {
+          return response.json().catch(function () { return {}; }).then(function (data) {
+            throw new Error(data.error || "not allowed");
+          });
+        }
         if (!response.ok) throw new Error(method + " " + response.status);
-        return response;
+        return response.json().catch(function () { return {}; });
       });
     }
 
-    function connect() {
-      setStatusPill("connecting", "Connecting…");
+    function handleMessage(event) {
+      var message;
       try {
-        stream = new EventSource(root + ".json");
+        message = JSON.parse(event.data);
       } catch (err) {
-        setStatusPill("error", "Sync unavailable");
         return;
       }
 
-      stream.addEventListener("open", function () {
-        setStatusPill("live", "Team sync on");
-      });
-
-      stream.addEventListener("put", function (event) {
-        var payload;
-        try {
-          payload = JSON.parse(event.data);
-        } catch (err) {
-          return;
-        }
-        /* A payload at the root is the whole tree: the initial one, and the
-         * one that arrives again after every reconnect. */
-        var isRoot = payload.path === "/" || !payload.path;
-        var snapshot = isRoot && !seenFirstPayload
-          ? JSON.parse(JSON.stringify(state))
-          : null;
-
-        apply(payload.path, payload.data, false);
-
+      if (message.type === "init") {
+        Identity.confirm(message.you);
+        var snapshot = seenFirstPayload ? null : JSON.parse(JSON.stringify(state));
+        var changes = [];
+        applyTree(message.availability, changes);
+        if (changes.length) { save(); handlers.onChange(changes); }
         if (snapshot) {
           seenFirstPayload = true;
-          queueUnsyncedMarks(snapshot, payload.data);
+          queueUnsyncedMarks(snapshot, message.availability);
         }
-        if (isRoot) flushPending();
-        setStatusPill("live", "Team sync on");
-      });
+        handlers.onIdentity();
+        flushPending();
+        return;
+      }
 
-      stream.addEventListener("patch", function (event) {
-        try {
-          var payload = JSON.parse(event.data);
-          apply(payload.path, payload.data, true);
-        } catch (err) { /* ignore malformed frames */ }
-      });
+      if (message.type === "cells") {
+        var edits = [];
+        (message.cells || []).forEach(function (cell) {
+          applyCell(cell.game, cell.player, cell.status, edits);
+        });
+        if (edits.length) { save(); handlers.onChange(edits); }
+        return;
+      }
 
-      /* EventSource retries on its own; just reflect that in the pill. */
-      stream.addEventListener("error", function () {
-        setStatusPill(stream.readyState === 2 ? "error" : "connecting",
-          stream.readyState === 2 ? "Sync disconnected" : "Reconnecting…");
+      if (message.type === "reset") {
+        var cleared = [];
+        applyTree({}, cleared);
+        pending = {};
+        if (cleared.length) { save(); handlers.onChange(cleared); }
+        toast("The grid was cleared for everyone.");
+      }
+    }
+
+    function connect() {
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      setStatusPill("connecting", "Connecting…");
+
+      var url = base.replace(/^http/, "ws") + "/ws?" + auth();
+      try {
+        socket = new WebSocket(url);
+      } catch (err) {
+        scheduleReconnect();
+        return;
+      }
+
+      socket.addEventListener("open", function () {
+        retry = 0;
+        setStatusPill("live", pillText());
+      });
+      socket.addEventListener("message", handleMessage);
+      socket.addEventListener("close", scheduleReconnect);
+      socket.addEventListener("error", function () {
+        try { socket.close(); } catch (err) { /* already closing */ }
       });
     }
 
+    /* Backs off to 30s so a long-dead connection isn't hammered, but the
+     * first few retries are quick because the usual cause is a phone briefly
+     * losing signal at the rink. */
+    function scheduleReconnect() {
+      if (retryTimer) return;
+      setStatusPill("error", "Reconnecting…");
+      var delay = Math.min(30000, 1000 * Math.pow(2, retry));
+      retry += 1;
+      retryTimer = setTimeout(function () {
+        retryTimer = null;
+        connect();
+      }, delay);
+    }
+
+    function pillText() {
+      var id = Identity.get();
+      if (id.captain) return "Captain — can edit any row";
+      if (id.player && nameByKey[id.player]) return nameByKey[id.player] + " — your row";
+      return "Viewing only";
+    }
+
     return {
-      enabled: enabled,
+      get enabled() { return enabled; },
+
+      /* Whole-grid operations (import, reset, loading a share link) belong to
+       * the captain once the team is sharing one grid. */
+      canWriteAll: function () {
+        return !enabled || Identity.get().captain;
+      },
+
+      canEdit: function (name) {
+        if (!enabled) return true;
+        var id = Identity.get();
+        if (id.captain) return true;
+        return !!id.player && keyByName[name] === id.player;
+      },
+
+      pillText: pillText,
 
       start: function (opts) {
         handlers = opts;
@@ -381,41 +467,46 @@
         connect();
       },
 
-      /* Per-cell writes so two people editing different cells never clobber
-       * each other. */
+      reconnect: function () {
+        if (!enabled) return;
+        seenFirstPayload = false;
+        if (socket) {
+          socket.removeEventListener("close", scheduleReconnect);
+          try { socket.close(); } catch (err) { /* already closed */ }
+        }
+        retry = 0;
+        connect();
+      },
+
       push: function (gk, name, status) {
         if (!enabled) return;
         var key = keyByName[name];
         if (!key) return;
         markOwnWrite(gk, name);
-        var url = root + "/" + toRemoteGame(gk) + "/" + key + ".json";
-        var call = status
-          ? request("PUT", url, status)
-          : request("DELETE", url);
-
-        call.then(function () {
-          delete pending[gk + "|" + name];
-        }, function () {
-          /* Retried the next time the stream delivers a full tree. */
-          queuePending(gk, name, status);
-          toast("Offline — saved here and queued for the team grid.");
-          setStatusPill("error", "Sync failed");
-        });
+        request("POST", "/mark", { game: gk, player: key, status: status || null })
+          .then(function () {
+            delete pending[gk + "|" + name];
+          }, function (err) {
+            queuePending(gk, name, status);
+            toast(/allowed|own row|code/.test(String(err.message))
+              ? "That change wasn't allowed — this link only marks its own row."
+              : "Offline — saved here and queued for the team grid.");
+          });
       },
 
       replaceAll: function (nextState) {
         if (!enabled) return Promise.resolve();
         pending = {};
-        var tree = {};
+        var cells = [];
         Object.keys(nextState).forEach(function (gk) {
-          var out = {};
           Object.keys(nextState[gk]).forEach(function (name) {
             var key = keyByName[name];
-            if (key) out[key] = nextState[gk][name];
+            if (key) cells.push({ game: gk, player: key, status: nextState[gk][name] });
           });
-          if (Object.keys(out).length) tree[toRemoteGame(gk)] = out;
         });
-        return request("PUT", root + ".json", tree).catch(function () {
+        return request("DELETE", "/state").then(function () {
+          return cells.length ? request("POST", "/bulk", { cells: cells }) : null;
+        }).catch(function () {
           toast("Couldn't write to the team grid.");
         });
       },
@@ -423,7 +514,7 @@
       clearAll: function () {
         if (!enabled) return Promise.resolve();
         pending = {};
-        return request("DELETE", root + ".json").catch(function () {
+        return request("DELETE", "/state").catch(function () {
           toast("Couldn't clear the team grid.");
         });
       }
@@ -485,8 +576,13 @@
     if (!hash.startsWith("s=")) return;
     var incoming = decodeState(hash.slice(2));
     history.replaceState(null, "", location.pathname + location.search);
+
     if (!incoming) {
       toast("That share link doesn't match the current roster/schedule.");
+      return;
+    }
+    if (!Sync.canWriteAll()) {
+      toast("Only the captain's link can load a whole grid over the team's.");
       return;
     }
     var question = Sync.enabled
@@ -566,7 +662,9 @@
     tr.appendChild(makeCell("th", "col-date corner", "Game"));
 
     players.forEach(function (p) {
-      var th = makeCell("th", "player-head" + (p.name === prefs.me ? " is-me" : ""));
+      var mine = Sync.enabled ? Sync.canEdit(p.name) && !Identity.get().captain
+        : p.name === prefs.me;
+      var th = makeCell("th", "player-head" + (mine ? " is-me" : ""));
       th.scope = "col";
       th.title = p.name + (p.role === "goalie" ? " (goalie)" : p.role === "captain" ? " (captain)" : "");
       var tag = p.role === "goalie" ? " <span class=\"tag\">(G)</span>"
@@ -578,6 +676,21 @@
     tr.appendChild(makeCell("th", "col-total corner", "In"));
     thead.appendChild(tr);
     return thead;
+  }
+
+  function renderNoteRow(entry, players, isPast) {
+    var tr = makeCell("tr", "note-row" + (isPast ? " is-past" : ""));
+    tr.dataset.kind = entry.kind;
+
+    var day = entry.weekday === "Saturday" ? "" : entry.weekday.slice(0, 3) + " ";
+    var td = makeCell("td", "col-date date-cell");
+    td.appendChild(makeCell("span", "d1", day + formatDate(entry.date)));
+    tr.appendChild(td);
+
+    var fill = makeCell("td", "note-fill", NOTE_LABEL[entry.kind] || "");
+    fill.colSpan = players.length + 1;
+    tr.appendChild(fill);
+    return tr;
   }
 
   function renderDateCell(game, isNext) {
@@ -595,8 +708,7 @@
      * games can fall on the same date -- without it those rows look identical
      * in the "Every C2 game" view. */
     td.appendChild(makeCell("span", "d1", day + formatDate(game.date)));
-    td.appendChild(makeCell("span", "d2",
-      "<b>" + game.time + "</b> · " + matchup));
+    td.appendChild(makeCell("span", "d2", "<b>" + game.time + "</b> · " + matchup));
 
     td.title = game.weekday + " " + formatDate(game.date) + "\n" +
       game.time + " · " + game.rink + "\n" + matchup +
@@ -635,21 +747,6 @@
     return td;
   }
 
-  function renderNoteRow(entry, players, isPast) {
-    var tr = makeCell("tr", "note-row" + (isPast ? " is-past" : ""));
-    tr.dataset.kind = entry.kind;
-
-    var day = entry.weekday === "Saturday" ? "" : entry.weekday.slice(0, 3) + " ";
-    var td = makeCell("td", "col-date date-cell");
-    td.appendChild(makeCell("span", "d1", day + formatDate(entry.date)));
-    tr.appendChild(td);
-
-    var fill = makeCell("td", "note-fill", NOTE_LABEL[entry.kind] || "");
-    fill.colSpan = players.length + 1;
-    tr.appendChild(fill);
-    return tr;
-  }
-
   function renderBody(rows, players, nextKey) {
     var tbody = makeCell("tbody");
     var today = todayISO();
@@ -672,11 +769,9 @@
 
       players.forEach(function (p) {
         var td = makeCell("td", "cell");
-        if (p.name === prefs.me) td.classList.add("is-me-col");
 
         if (!isMarkable(game)) {
           td.className = "cell is-locked";
-          td.style.cursor = "default";
           tr.appendChild(td);
           return;
         }
@@ -686,7 +781,16 @@
         td.dataset.key = key;
         td.dataset.player = p.name;
         td.textContent = GLYPH[status] || "";
-        td.title = p.name + " — " + formatDate(game.date);
+
+        if (Sync.canEdit(p.name)) {
+          if (Sync.enabled && !Identity.get().captain) td.classList.add("is-me-col");
+          else if (!Sync.enabled && p.name === prefs.me) td.classList.add("is-me-col");
+          td.title = p.name + " — " + formatDate(game.date);
+        } else {
+          /* Not yours to change: no pointer, no hover, no click handler. */
+          td.classList.add("is-readonly");
+          td.title = p.name + " — only " + p.first + "'s own link can change this";
+        }
         tr.appendChild(td);
       });
 
@@ -777,6 +881,15 @@
   function onGridClick(event) {
     var td = event.target.closest("td.cell");
     if (!td || !td.dataset.key) return;
+
+    if (!Sync.canEdit(td.dataset.player)) {
+      var id = Identity.get();
+      toast(id.code
+        ? "That's " + td.dataset.player + "'s row — your link only marks your own."
+        : "Open your personal link to mark your availability.");
+      return;
+    }
+
     var current = td.dataset.status || "";
     var next = CYCLE[(CYCLE.indexOf(current) + 1) % CYCLE.length];
 
@@ -792,7 +905,6 @@
   /* Repaint just the cells a remote change touched, so nobody loses their
    * scroll position mid-edit. */
   function applyRemoteChanges(changes) {
-    var touched = false;
     changes.forEach(function (change) {
       var row = el.grid.querySelector('tbody tr[data-game="' + change.gameKey + '"]');
       if (!row) return;
@@ -806,9 +918,8 @@
         void td.offsetWidth;
         td.classList.add("just-synced");
       }
-      touched = true;
     });
-    if (touched || changes.length) refreshTotals();
+    if (changes.length) refreshTotals();
   }
 
   /* Cheaper than a full re-render on every click. */
@@ -890,6 +1001,42 @@
   /* wiring                                                              */
   /* ------------------------------------------------------------------ */
 
+  /* Whole-grid buttons only make sense for whoever is allowed to use them. */
+  function syncControlAccess() {
+    var allowed = Sync.canWriteAll();
+    ["btn-import", "btn-reset"].forEach(function (id) {
+      var button = document.getElementById(id);
+      button.hidden = !allowed;
+    });
+
+    if (!Sync.enabled) return;
+    var id = Identity.get();
+    el.me.disabled = true;
+    el.me.value = id.captain ? "" : (nameByKey[id.player] || "");
+    prefs.me = el.me.value;
+    el.syncPill.title = id.captain
+      ? "Captain link — you can change anyone's row."
+      : id.player
+        ? "You can change your own row. Everyone else's is read-only."
+        : "Read-only. Open your personal link to mark availability.";
+  }
+
+  function describeStorage() {
+    var link = "<a href=\"https://github.com/bengrier/benders-scheduler\">source</a>";
+    if (!Sync.enabled) {
+      el.hintStorage.textContent = "Everything saves in this browser.";
+      el.footerNote.innerHTML = "Saved locally in this browser · " + link;
+      return;
+    }
+    var id = Identity.get();
+    el.hintStorage.textContent = id.captain
+      ? "You're on the captain link — you can mark any row."
+      : id.player
+        ? "You can mark your own row; everyone else's is read-only."
+        : "Read-only — open your personal link to mark your availability.";
+    el.footerNote.innerHTML = "Shared team grid · " + link;
+  }
+
   function wire() {
     el.grid.addEventListener("click", onGridClick);
     el.filter.addEventListener("input", render);
@@ -921,7 +1068,9 @@
     el.onlyMine.addEventListener("change", function () {
       if (el.onlyMine.checked && !prefs.me) {
         el.onlyMine.checked = false;
-        toast("Pick your name in “I am” first.");
+        toast(Sync.enabled
+          ? "Open your personal link first."
+          : "Pick your name in “I am” first.");
         return;
       }
       prefs.onlyMine = el.onlyMine.checked;
@@ -941,6 +1090,14 @@
       fileInput.value = "";
     });
 
+    /* Tapping a personal link while the page is already open only changes the
+     * hash -- the browser doesn't reload -- so claim it here too. */
+    window.addEventListener("hashchange", function () {
+      if (!Identity.claimFromHash()) return;
+      Sync.reconnect();
+      toast("Personal link accepted.");
+    });
+
     document.getElementById("btn-reset").addEventListener("click", function () {
       var question = Sync.enabled
         ? "Clear every mark for the whole team? Export first if you want a copy."
@@ -954,18 +1111,6 @@
     });
   }
 
-  function describeStorage() {
-    if (Sync.enabled) {
-      el.hintStorage.textContent = "Everyone shares one live grid — mark your own row from any device.";
-      el.footerNote.innerHTML =
-        "Shared team grid · <a href=\"https://github.com/bengrier/benders-scheduler\">source</a>";
-    } else {
-      el.hintStorage.textContent = "Everything saves in this browser.";
-      el.footerNote.innerHTML =
-        "Saved locally in this browser · <a href=\"https://github.com/bengrier/benders-scheduler\">source</a>";
-    }
-  }
-
   function init() {
     if (!PLAYERS.length || !GAMES.length) {
       el.empty.hidden = false;
@@ -975,13 +1120,27 @@
     }
     load();
     loadPrefs();
+    Identity.load();
+    Identity.claimFromHash();
     readSharedState();
+
     el.seasonLine.textContent = SCHEDULE.title + " · " + TEAM;
     document.title = TEAM + " Availability — " + SCHEDULE.title;
-    describeStorage();
+
     wire();
+    syncControlAccess();
+    describeStorage();
     render();
-    Sync.start({ onChange: applyRemoteChanges });
+
+    Sync.start({
+      onChange: applyRemoteChanges,
+      onIdentity: function () {
+        syncControlAccess();
+        describeStorage();
+        el.syncText.textContent = Sync.pillText();
+        render();
+      }
+    });
   }
 
   init();

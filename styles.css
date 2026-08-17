@@ -244,8 +244,12 @@ main { padding: 16px 18px 8px; }
   font-weight: 500;
 }
 
-.player-head.is-me { background: var(--accent-soft); }
-.player-head.is-me .name { color: var(--accent); }
+.player-head.is-me {
+  background: var(--accent-soft);
+  box-shadow: inset 1px 0 0 var(--accent), inset -1px 0 0 var(--accent);
+}
+
+.player-head.is-me .name { color: var(--accent); font-weight: 700; }
 
 /* Date cells */
 
@@ -314,7 +318,17 @@ tr.is-other .cell { background: repeating-linear-gradient(45deg, transparent, tr
 }
 
 .cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
-.cell.is-me-col { box-shadow: inset 0 0 0 99px rgba(127, 178, 240, 0.07); }
+
+/* Somebody else's row: visibly not yours to tap. */
+.cell.is-readonly { cursor: default; }
+.cell.is-readonly:hover { outline: none; }
+.cell.is-locked { cursor: default; }
+/* Rails down both sides of the column you're allowed to edit, so on a phone
+ * it's obvious which one is yours before you tap. */
+.cell.is-me-col {
+  background: var(--accent-soft);
+  box-shadow: inset 1px 0 0 var(--accent), inset -1px 0 0 var(--accent);
+}
 .cell[data-status="in"] { background: var(--in-bg); color: var(--in-ink); }
 .cell[data-status="out"] { background: var(--out-bg); color: var(--out-ink); }
 .cell[data-status="maybe"] { background: var(--maybe-bg); color: var(--maybe-ink); }

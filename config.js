@@ -1,17 +1,16 @@
 /* Team sync configuration.
  *
- * Leave SYNC_URL empty and the grid works exactly as before: everything saves
- * in your own browser only.
+ * Leave SYNC_URL empty and the grid works on its own: everything saves in your
+ * own browser, and every column is editable.
  *
- * Set it to a Firebase Realtime Database URL and the whole team shares one
- * live grid -- each player marks their own row from their own phone and
- * everyone else sees it appear. Still no accounts and no logins.
+ * Set it to the deployed Cloudflare Worker in worker/ and the whole team
+ * shares one live grid. Each player opens a personal link once to claim their
+ * column, and from then on can only change their own row -- no accounts, no
+ * logins, and no marking somebody else's availability by accident.
  *
- * Setup takes about two minutes; see "Turning on team sync" in the README.
- * The URL looks like one of these:
+ * See "Turning on team sync" in the README. The URL looks like:
  *
- *   https://benders-abc123-default-rtdb.firebaseio.com
- *   https://benders-abc123-default-rtdb.us-central1.firebasedatabase.app
+ *   https://benders-availability.<your-subdomain>.workers.dev
  */
 
 window.SYNC_URL = "";
