@@ -90,12 +90,17 @@ window.SYNC_URL = "https://benders-availability.<your-subdomain>.workers.dev";
 Then generate everyone's personal link:
 
 ```bash
-TEAM_SECRET=<the same secret> node scripts/make_links.mjs https://bengrier.github.io/benders-scheduler/
+node scripts/make_links.mjs
 ```
 
-That prints one link per player plus a captain link. Text each player their
-own. Opening it once claims their column — after that the plain site URL works
-and remembers who they are.
+It prompts for the team secret (hidden, so it stays out of your shell history)
+and prints one link per player plus a captain link. Text each player their own.
+Opening it once claims their column — after that the plain site URL works and
+remembers who they are.
+
+The script resolves its own paths, so it runs from any directory — give it the
+full path if you're not in the project folder. Pass a different site URL as the
+first argument, or set `TEAM_SECRET` in the environment to skip the prompt.
 
 Anything already marked in a browser gets merged into the team grid the first
 time it connects, so nothing is lost switching sync on.
