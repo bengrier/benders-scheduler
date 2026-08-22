@@ -6,3 +6,6 @@ __pycache__/
 node_modules/
 .dev.vars
 .wrangler/
+
+# Personal access links are credentials — never commit them.
+*links*.txt

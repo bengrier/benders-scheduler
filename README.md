@@ -7,6 +7,12 @@ No logins and no accounts. Works on its own out of the box; switch on
 [team sync](#team-sync) and everyone marks their own row from their own phone,
 without being able to mark anyone else's by accident.
 
+| | |
+|---|---|
+| **Site** | https://bengrier.github.io/benders-scheduler/ |
+| **Backend** | https://benders-availability.bengrier.workers.dev |
+| **Status** | Team sync is **on**. |
+
 ## Using it
 
 Click a cell to cycle through:
@@ -21,7 +27,9 @@ Click a cell to cycle through:
 Controls along the top:
 
 - **Filter players** — type a few letters to narrow the columns.
-- **I am** — pick yourself; your column gets highlighted.
+- **I am** — with sync off, pick yourself and your column is highlighted. With
+  sync on it's set by your personal link and locked, so it always matches the
+  row you're allowed to edit.
 - **Only my column** — hides everyone else, handy on a phone.
 - **Games** — upcoming Benders games (default), the full Benders season, or
   every game in the division. Some Saturdays have two league games, so each row
@@ -62,7 +70,13 @@ nobody marks the wrong person by accident — and that's enforced by the server,
 not just hidden in the interface. Your own column is drawn with rails down both
 sides so it's obvious which one to tap on a phone.
 
-### Turning it on
+### Already set up
+
+Sync is live — the Worker is deployed, `TEAM_SECRET` is set in Cloudflare, and
+[`config.js`](config.js) points at it. Nothing below needs doing again unless
+you're rebuilding from scratch or moving to another Cloudflare account.
+
+### How it was set up
 
 The backend is the Cloudflare Worker in [`worker/`](worker/) — one Durable
 Object holding the season. Free tier covers it many times over: Workers give
@@ -84,23 +98,30 @@ npx wrangler secret put TEAM_SECRET
 Put the deployed URL in [`config.js`](config.js) and commit:
 
 ```js
-window.SYNC_URL = "https://benders-availability.<your-subdomain>.workers.dev";
+window.SYNC_URL = "https://benders-availability.bengrier.workers.dev";
 ```
 
 Then generate everyone's personal link:
 
 ```bash
-node scripts/make_links.mjs
+node scripts/make_links.mjs --out ~/Desktop/benders-player-links.txt
 ```
 
-It prompts for the team secret (hidden, so it stays out of your shell history)
-and prints one link per player plus a captain link. Text each player their own.
-Opening it once claims their column — after that the plain site URL works and
-remembers who they are.
+It prompts for the team secret (hidden, so it stays out of shell history) and
+writes one link per player plus a captain link, owner-readable only. Drop
+`--out` to print to the screen instead.
 
-The script resolves its own paths, so it runs from any directory — give it the
+Text each player their own link. Opening it once claims their column — after
+that the plain site URL works and remembers who they are.
+
+The script resolves its own paths, so it runs from any directory; give it the
 full path if you're not in the project folder. Pass a different site URL as the
 first argument, or set `TEAM_SECRET` in the environment to skip the prompt.
+
+**The links are credentials.** Each one can mark that player's row, and the
+captain link can mark anyone and reset the whole season. `--out` refuses to
+write inside this repo, since it's public, and `.gitignore` covers
+`*links*.txt` as a second line of defence.
 
 Anything already marked in a browser gets merged into the team grid the first
 time it connects, so nothing is lost switching sync on.
@@ -138,6 +159,49 @@ Codes are an HMAC of the team secret and the player's key, so there's no list of
 codes stored anywhere — `make_links.mjs` regenerates them whenever you need
 them. Rotating `TEAM_SECRET` invalidates every link at once.
 
+### Keeping it running
+
+**Someone lost their link.** Re-run `make_links.mjs` with the same secret — the
+codes are derived, not random, so you get the identical link back. Nothing to
+reset.
+
+**Someone's phone forgot who they are.** Same fix: send their link again.
+
+**Adding or dropping a player.** Edit `C2 Benders Players.xlsx`, re-run
+`python3 scripts/parse_excel.py`, commit, then re-run `make_links.mjs` and send
+the new person their link. Everyone else's link is unchanged.
+
+**Renaming a player.** Their key changes, which orphans their existing marks and
+invalidates their old link. Avoid mid-season if you can.
+
+**A link leaked, or someone left the team.** Set a new secret and reissue
+everything:
+
+```bash
+cd worker && npx wrangler secret put TEAM_SECRET
+```
+
+Every existing link stops working the moment you do. Re-run `make_links.mjs`
+with the new secret and send all 14 out again. No redeploy needed.
+
+**Changing the Worker code.** `cd worker && npx wrangler deploy`. The season
+data lives in the Durable Object and survives deploys.
+
+**Is it alive?**
+
+```bash
+curl https://benders-availability.bengrier.workers.dev/health
+```
+
+Should return `{"ok":true,"service":"benders-availability"}`. To see the raw
+grid, swap `/health` for `/state`.
+
+**Backing up.** Export from the site saves a `.json` of everything. Worth doing
+once mid-season; Import restores it (captain only).
+
+**End of season.** Captain link → Reset clears the grid for everyone. Export
+first if you want to keep the record.
+
 ## Sharing without sync
 
 These work in either mode:
@@ -153,11 +217,12 @@ These work in either mode:
 
 ## Running it
 
-Just open `index.html` — double-click it, or drag it into a browser. It works
-straight off the filesystem with no server and no internet connection.
+Normally: https://bengrier.github.io/benders-scheduler/ — that's what the
+team's links point at, and it's the copy everyone shares.
 
-If it's published to GitHub Pages, use that URL instead so everyone's looking at
-the same page.
+You can also open `index.html` straight off the filesystem by double-clicking
+it. That still works, and with sync on it connects to the same live grid. With
+sync off it runs entirely offline, no server and no internet.
 
 ## Updating the schedule or roster
 
