@@ -918,5 +918,19 @@
     });
   }
 
-  init();
+  /* If start-up dies partway the page is left blank with no hint why, which is
+   * a miserable thing to hand a teammate. Say something, and still let the
+   * error reach the console. */
+  try {
+    init();
+  } catch (err) {
+    if (el.empty) {
+      el.empty.hidden = false;
+      el.empty.textContent =
+        "Something went wrong loading the grid. Reload the page — a force-refresh " +
+        "clears a half-updated copy if a plain reload doesn't.";
+    }
+    if (el.gridWrap) el.gridWrap.hidden = true;
+    throw err;
+  }
 })();
