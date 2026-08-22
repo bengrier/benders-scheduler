@@ -78,27 +78,6 @@ body {
   font-size: 13px;
 }
 
-.topbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.btn {
-  font: inherit;
-  font-size: 13px;
-  padding: 7px 12px;
-  border-radius: 7px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--ink);
-  cursor: pointer;
-}
-
-.btn:hover { background: var(--accent-soft); border-color: var(--accent); }
-.btn:active { transform: translateY(1px); }
-.btn-quiet { color: var(--ink-soft); }
-
 /* ---------- controls ---------- */
 
 .controls {
@@ -451,8 +430,6 @@ tfoot .pct { display: block; font-size: 10.5px; color: var(--ink-faint); font-we
   .topbar, .controls, main, .footer { padding-left: 10px; padding-right: 10px; }
   .topbar { padding-top: 10px; padding-bottom: 10px; }
   .topbar h1 { font-size: 17px; }
-  .topbar-actions { gap: 6px; }
-  .btn { padding: 6px 9px; font-size: 12px; }
 
   .controls { gap: 10px 12px; padding-top: 10px; padding-bottom: 10px; }
   .field { flex: 1 1 46%; }

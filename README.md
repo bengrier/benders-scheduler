@@ -27,10 +27,8 @@ Click a cell to cycle through:
 Controls along the top:
 
 - **Filter players** — type a few letters to narrow the columns.
-- **I am** — with sync off, pick yourself and your column is highlighted. With
-  sync on it's set by your personal link and locked, so it always matches the
-  row you're allowed to edit.
-- **Only my column** — hides everyone else, handy on a phone.
+- **Only my column** — hides everyone else, handy on a phone. Who "you" are
+  comes from your personal link, so it needs one.
 - **Games** — upcoming Benders games (default), the full Benders season, or
   every game in the division. Some Saturdays have two league games, so each row
   shows its start time.
@@ -61,7 +59,7 @@ The pill under the title says where you stand:
 |---|---|
 | **This browser only** | No sync. Marks stay on this device. |
 | **Ben Grier — your row** | Mark your own row. Everyone else's is read-only. |
-| **Captain — can edit any row** | Mark anyone, plus Import and Reset. |
+| **Captain — can edit any row** | Mark any row on the grid. |
 | **Viewing only** | Read the grid. No personal link yet. |
 
 Nobody signs in or creates an account. Each player opens a **personal link**
@@ -119,7 +117,7 @@ full path if you're not in the project folder. Pass a different site URL as the
 first argument, or set `TEAM_SECRET` in the environment to skip the prompt.
 
 **The links are credentials.** Each one can mark that player's row, and the
-captain link can mark anyone and reset the whole season. `--out` refuses to
+captain link can mark anyone's row. `--out` refuses to
 write inside this repo, since it's public, and `.gitignore` covers
 `*links*.txt` as a second line of defence.
 
@@ -153,7 +151,6 @@ Put `TEAM_SECRET=whatever` in `worker/.dev.vars` (gitignored) and point
 | Read the grid | ✓ | ✓ | ✓ |
 | Mark own row | ✓ | ✓ | |
 | Mark anyone's row | | ✓ | |
-| Import / Reset / load a share link | | ✓ | |
 
 Codes are an HMAC of the team secret and the player's key, so there's no list of
 codes stored anywhere — `make_links.mjs` regenerates them whenever you need
@@ -196,24 +193,11 @@ curl https://benders-availability.bengrier.workers.dev/health
 Should return `{"ok":true,"service":"benders-availability"}`. To see the raw
 grid, swap `/health` for `/state`.
 
-**Backing up.** Export from the site saves a `.json` of everything. Worth doing
-once mid-season; Import restores it (captain only).
+**Backing up.** `GET /state` on the Worker returns the whole grid as JSON.
+Worth saving once mid-season.
 
-**End of season.** Captain link → Reset clears the grid for everyone. Export
-first if you want to keep the record.
-
-## Sharing without sync
-
-These work in either mode:
-
-- **Copy share link** — packs the whole grid into a URL. Send it to someone and
-  opening it loads that state. Not to be confused with a *personal* link: a
-  share link carries a snapshot of the grid, a personal link carries who you
-  are. With sync on, loading a share link replaces the team grid, so it's
-  captain-only and asks first.
-- **Export** — saves a `.json` file. Anyone can.
-- **Import / Reset** — replace or wipe the whole grid. Captain only once sync is
-  on, and hidden entirely for everyone else.
+**End of season.** `DELETE /state` on the Worker, with the captain code, clears
+the grid for everyone. Grab `/state` first if you want to keep the record.
 
 ## Running it
 
@@ -251,16 +235,15 @@ Three things to know when the season file changes:
   update as long as those don't move.
 - Players are keyed by a slug of their name (`ben-grier`). Renaming someone
   orphans their marks; the script refuses to run if two names collide.
-- Share links encode player and game *positions*, so links made before a roster
-  change won't load afterward. The app detects this and says so rather than
-  loading the wrong data.
+- Personal links are derived from the team secret and the player's key, so a
+  roster change only affects the people whose keys changed.
 
 ## Files
 
 ```
 index.html               the page
 styles.css               styling, including dark mode
-app.js                   grid rendering, state, sync, share/export
+app.js                   grid rendering, state, sync
 config.js                SYNC_URL — the one thing you edit by hand
 data/data.js             generated — what the page loads
 data/*.json              generated — same data, for anything else you build

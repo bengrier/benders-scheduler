@@ -2,8 +2,8 @@
  *
  * Rows are game dates, columns are players, cells are one of four states.
  *
- * With SYNC_URL unset (see config.js) everything lives in localStorage and the
- * share link / export buttons are how state moves between people.
+ * With SYNC_URL unset (see config.js) everything lives in localStorage and
+ * never leaves this browser.
  *
  * With it set, the whole team shares one live grid served by the Cloudflare
  * Worker in worker/. Each player opens a personal link once, which claims
@@ -33,13 +33,11 @@
   var IDENTITY_KEY = "benders-identity-v1";
   var CYCLE = ["", "in", "out", "maybe"];
   var GLYPH = { in: "✓", out: "✗", maybe: "?" };
-  var STATUS_CHAR = { "": ".", in: "i", out: "o", maybe: "m" };
-  var CHAR_STATUS = { ".": "", i: "in", o: "out", m: "maybe" };
   var VALID_STATUS = { in: 1, out: 1, maybe: 1 };
 
   /* state[gameKey][playerName] = "in" | "out" | "maybe" */
   var state = {};
-  var prefs = { me: "", scope: "upcoming", onlyMine: false };
+  var prefs = { scope: "upcoming", onlyMine: false };
 
   var nameByKey = {};
   var keyByName = {};
@@ -53,7 +51,6 @@
     gridWrap: document.getElementById("grid-wrap"),
     empty: document.getElementById("empty-msg"),
     filter: document.getElementById("filter-players"),
-    me: document.getElementById("me-select"),
     scope: document.getElementById("game-scope"),
     onlyMine: document.getElementById("toggle-mine"),
     seasonLine: document.getElementById("season-line"),
@@ -442,12 +439,6 @@
     return {
       get enabled() { return enabled; },
 
-      /* Whole-grid operations (import, reset, loading a share link) belong to
-       * the captain once the team is sharing one grid. */
-      canWriteAll: function () {
-        return !enabled || Identity.get().captain;
-      },
-
       canEdit: function (name) {
         if (!enabled) return true;
         var id = Identity.get();
@@ -492,109 +483,9 @@
               ? "That change wasn't allowed — this link only marks its own row."
               : "Offline — saved here and queued for the team grid.");
           });
-      },
-
-      replaceAll: function (nextState) {
-        if (!enabled) return Promise.resolve();
-        pending = {};
-        var cells = [];
-        Object.keys(nextState).forEach(function (gk) {
-          Object.keys(nextState[gk]).forEach(function (name) {
-            var key = keyByName[name];
-            if (key) cells.push({ game: gk, player: key, status: nextState[gk][name] });
-          });
-        });
-        return request("DELETE", "/state").then(function () {
-          return cells.length ? request("POST", "/bulk", { cells: cells }) : null;
-        }).catch(function () {
-          toast("Couldn't write to the team grid.");
-        });
-      },
-
-      clearAll: function () {
-        if (!enabled) return Promise.resolve();
-        pending = {};
-        return request("DELETE", "/state").catch(function () {
-          toast("Couldn't clear the team grid.");
-        });
       }
     };
   })();
-
-  /* ---- share link -------------------------------------------------- */
-
-  /* "v1|63|14|3-.i..o.......m;7-..i..........."  then base64url in the hash.
-   * Positions are indexes into GAMES and PLAYERS, so the counts let us bail
-   * out politely if the roster or schedule changed since the link was made. */
-  function encodeState() {
-    var chunks = [];
-    GAMES.forEach(function (game, gi) {
-      var row = state[gameKey(game)];
-      if (!row) return;
-      var chars = PLAYERS.map(function (p) {
-        return STATUS_CHAR[row[p.name] || ""] || ".";
-      }).join("");
-      if (/^\.+$/.test(chars)) return;
-      chunks.push(gi + "-" + chars);
-    });
-    if (!chunks.length) return "";
-    var raw = ["v1", GAMES.length, PLAYERS.length, chunks.join(";")].join("|");
-    return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-
-  function decodeState(token) {
-    var raw;
-    try {
-      raw = atob(token.replace(/-/g, "+").replace(/_/g, "/"));
-    } catch (err) {
-      return null;
-    }
-    var parts = raw.split("|");
-    if (parts[0] !== "v1") return null;
-    if (+parts[1] !== GAMES.length || +parts[2] !== PLAYERS.length) return null;
-
-    var next = {};
-    (parts[3] || "").split(";").forEach(function (chunk) {
-      var split = chunk.indexOf("-");
-      if (split < 0) return;
-      var game = GAMES[+chunk.slice(0, split)];
-      var chars = chunk.slice(split + 1);
-      if (!game) return;
-      PLAYERS.forEach(function (p, pi) {
-        var status = CHAR_STATUS[chars[pi]] || "";
-        if (!status) return;
-        var key = gameKey(game);
-        if (!next[key]) next[key] = {};
-        next[key][p.name] = status;
-      });
-    });
-    return next;
-  }
-
-  function readSharedState() {
-    var hash = location.hash.replace(/^#/, "");
-    if (!hash.startsWith("s=")) return;
-    var incoming = decodeState(hash.slice(2));
-    history.replaceState(null, "", location.pathname + location.search);
-
-    if (!incoming) {
-      toast("That share link doesn't match the current roster/schedule.");
-      return;
-    }
-    if (!Sync.canWriteAll()) {
-      toast("Only the captain's link can load a whole grid over the team's.");
-      return;
-    }
-    var question = Sync.enabled
-      ? "Load this shared availability? It replaces the whole team grid."
-      : "Load the shared availability? This replaces what's in this browser.";
-    if (Object.keys(state).length && !confirm(question)) return;
-
-    state = incoming;
-    save();
-    Sync.replaceAll(state);
-    toast("Loaded shared availability.");
-  }
 
   /* ------------------------------------------------------------------ */
   /* what to show                                                        */
@@ -638,8 +529,9 @@
 
   function visiblePlayers() {
     var query = el.filter.value.trim().toLowerCase();
+    var me = Identity.name();
     return PLAYERS.filter(function (p) {
-      if (prefs.onlyMine && prefs.me) return p.name === prefs.me;
+      if (prefs.onlyMine && me) return p.name === me;
       if (!query) return true;
       return p.name.toLowerCase().includes(query);
     });
@@ -663,7 +555,7 @@
 
     players.forEach(function (p) {
       var mine = Sync.enabled ? Sync.canEdit(p.name) && !Identity.get().captain
-        : p.name === prefs.me;
+        : p.name === Identity.name();
       var th = makeCell("th", "player-head" + (mine ? " is-me" : ""));
       th.scope = "col";
       th.title = p.name + (p.role === "goalie" ? " (goalie)" : p.role === "captain" ? " (captain)" : "");
@@ -784,7 +676,7 @@
 
         if (Sync.canEdit(p.name)) {
           if (Sync.enabled && !Identity.get().captain) td.classList.add("is-me-col");
-          else if (!Sync.enabled && p.name === prefs.me) td.classList.add("is-me-col");
+          else if (!Sync.enabled && p.name === Identity.name()) td.classList.add("is-me-col");
           td.title = p.name + " — " + formatDate(game.date);
         } else {
           /* Not yours to change: no pointer, no hover, no click handler. */
@@ -937,90 +829,12 @@
     renderFooterStats(nextGame());
   }
 
-  function exportJSON() {
-    var payload = {
-      exported: new Date().toISOString(),
-      season: SCHEDULE.title,
-      team: TEAM,
-      availability: state
-    };
-    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    var link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "benders-availability-" + todayISO() + ".json";
-    link.click();
-    URL.revokeObjectURL(link.href);
-  }
-
-  function importJSON(file) {
-    var reader = new FileReader();
-    reader.onload = function () {
-      var parsed;
-      try {
-        parsed = JSON.parse(reader.result);
-      } catch (err) {
-        toast("That file isn't valid JSON.");
-        return;
-      }
-      var incoming = parsed && parsed.availability;
-      if (!incoming || typeof incoming !== "object") {
-        toast("No availability data in that file.");
-        return;
-      }
-      if (Sync.enabled &&
-        !confirm("Import replaces the whole team grid, for everyone. Continue?")) {
-        return;
-      }
-      state = incoming;
-      save();
-      Sync.replaceAll(state);
-      render();
-      toast("Imported.");
-    };
-    reader.readAsText(file);
-  }
-
-  function copyShareLink() {
-    var token = encodeState();
-    if (!token) {
-      toast("Nothing marked yet — fill in some cells first.");
-      return;
-    }
-    var url = location.origin + location.pathname + location.search + "#s=" + token;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(
-        function () { toast("Share link copied."); },
-        function () { window.prompt("Copy this link:", url); }
-      );
-    } else {
-      window.prompt("Copy this link:", url);
-    }
-  }
-
   /* ------------------------------------------------------------------ */
   /* wiring                                                              */
   /* ------------------------------------------------------------------ */
 
-  /* Whole-grid buttons only make sense for whoever is allowed to use them. */
-  function syncControlAccess() {
-    var allowed = Sync.canWriteAll();
-    ["btn-import", "btn-reset"].forEach(function (id) {
-      var button = document.getElementById(id);
-      button.hidden = !allowed;
-    });
-
-    if (!Sync.enabled) return;
-    var id = Identity.get();
-    el.me.disabled = true;
-    el.me.value = id.captain ? "" : (nameByKey[id.player] || "");
-    prefs.me = el.me.value;
-    el.syncPill.title = id.captain
-      ? "Captain link — you can change anyone's row."
-      : id.player
-        ? "You can change your own row. Everyone else's is read-only."
-        : "Read-only. Open your personal link to mark availability.";
-  }
-
+  /* Say, in the hint line, the footer and the pill's tooltip, what this
+   * browser's link may change. */
   function describeStorage() {
     var link = "<a href=\"https://github.com/bengrier/benders-scheduler\">source</a>";
     if (!Sync.enabled) {
@@ -1029,6 +843,11 @@
       return;
     }
     var id = Identity.get();
+    el.syncPill.title = id.captain
+      ? "Captain link — you can change anyone's row."
+      : id.player
+        ? "You can change your own row. Everyone else's is read-only."
+        : "Read-only. Open your personal link to mark availability.";
     el.hintStorage.textContent = id.captain
       ? "You're on the captain link — you can mark any row."
       : id.player
@@ -1041,23 +860,8 @@
     el.grid.addEventListener("click", onGridClick);
     el.filter.addEventListener("input", render);
 
-    PLAYERS.forEach(function (p) {
-      var option = document.createElement("option");
-      option.value = p.name;
-      option.textContent = p.name;
-      el.me.appendChild(option);
-    });
-
-    el.me.value = prefs.me;
     el.scope.value = prefs.scope;
     el.onlyMine.checked = prefs.onlyMine;
-
-    el.me.addEventListener("change", function () {
-      prefs.me = el.me.value;
-      if (!prefs.me) { prefs.onlyMine = false; el.onlyMine.checked = false; }
-      savePrefs();
-      render();
-    });
 
     el.scope.addEventListener("change", function () {
       prefs.scope = el.scope.value;
@@ -1066,28 +870,14 @@
     });
 
     el.onlyMine.addEventListener("change", function () {
-      if (el.onlyMine.checked && !prefs.me) {
+      if (el.onlyMine.checked && !Identity.name()) {
         el.onlyMine.checked = false;
-        toast(Sync.enabled
-          ? "Open your personal link first."
-          : "Pick your name in “I am” first.");
+        toast("Open your personal link first.");
         return;
       }
       prefs.onlyMine = el.onlyMine.checked;
       savePrefs();
       render();
-    });
-
-    document.getElementById("btn-export").addEventListener("click", exportJSON);
-    document.getElementById("btn-share").addEventListener("click", copyShareLink);
-
-    var fileInput = document.getElementById("file-import");
-    document.getElementById("btn-import").addEventListener("click", function () {
-      fileInput.click();
-    });
-    fileInput.addEventListener("change", function () {
-      if (fileInput.files[0]) importJSON(fileInput.files[0]);
-      fileInput.value = "";
     });
 
     /* Tapping a personal link while the page is already open only changes the
@@ -1096,18 +886,6 @@
       if (!Identity.claimFromHash()) return;
       Sync.reconnect();
       toast("Personal link accepted.");
-    });
-
-    document.getElementById("btn-reset").addEventListener("click", function () {
-      var question = Sync.enabled
-        ? "Clear every mark for the whole team? Export first if you want a copy."
-        : "Clear every mark in this browser? Export first if you want a copy.";
-      if (!confirm(question)) return;
-      state = {};
-      save();
-      Sync.clearAll();
-      render();
-      toast("Cleared.");
     });
   }
 
@@ -1122,20 +900,17 @@
     loadPrefs();
     Identity.load();
     Identity.claimFromHash();
-    readSharedState();
 
     el.seasonLine.textContent = SCHEDULE.title + " · " + TEAM;
     document.title = TEAM + " Availability — " + SCHEDULE.title;
 
     wire();
-    syncControlAccess();
     describeStorage();
     render();
 
     Sync.start({
       onChange: applyRemoteChanges,
       onIdentity: function () {
-        syncControlAccess();
         describeStorage();
         el.syncText.textContent = Sync.pillText();
         render();
