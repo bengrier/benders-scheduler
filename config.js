@@ -13,4 +13,4 @@
  *   https://benders-availability.<your-subdomain>.workers.dev
  */
 
-window.SYNC_URL = "";
+window.SYNC_URL = "https://benders-availability.bengrier.workers.dev";
